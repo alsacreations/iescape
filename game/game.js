@@ -9,8 +9,8 @@ function updateScore(offset) {
 }
 
 // Initialisation du jeu avec le moteur Quintus
-var Q = Quintus({ imagePath: "/game/images/", dataPath: "/game/levels/" })
-  .include("Sprites, Scenes, Input, 2D, Anim, Touch, UI, TMX")
+var Q = Quintus({ imagePath: "/game/images/", dataPath: "/game/levels/", audioPath: "/game/sounds/" })
+  .include("Sprites, Scenes, Input, 2D, Anim, Touch, UI, TMX, Audio")
   // .setup("game")
   .setup({ maximize: true })
   .controls().touch();
@@ -25,7 +25,7 @@ Q.input.keyboardControls({
 Q.Sprite.extend("Player", {
   init: function (p) {
     this._super(p, { sheet: "player", x: 400, y: 100 });
-    this.add('2d, platformerControls');
+    this.add('2d, platformerControls, tween');
 
     // Gagne si on touche le goal de fin
     this.on("hit.sprite", function (collision) {
@@ -42,6 +42,7 @@ Q.Sprite.extend("Player", {
       this.stage.unfollow();
     }
     if (this.p.y > 1100) {
+      Q.audio.play("wilhelmscream");
       this.resetLevel();
     }
   },
@@ -67,6 +68,7 @@ Q.Sprite.extend("Jump", {
     this.on("bump.top", function (collision) {
       if (collision.obj.isA("Player")) {
         collision.obj.p.vy = -450;
+        Q.audio.play("bounce");
       }
     });
   }
@@ -75,17 +77,30 @@ Q.Sprite.extend("Jump", {
 // Pièce
 Q.Sprite.extend("Coin", {
   init: function (p) {
-    this._super(p, { sheet: 'coin' });
+    this._super(p, { sheet: 'coin', sensor: true }); // sensor: true
     // this.add('2d'); // gravité
-    // this.add('tween'); // animation
+    this.add('tween'); // animation
     this.on("hit.sprite", function (collision) {
       if (collision.obj.isA("Player")) {
         // this.animate({ y: this.p.y-30 },200,Q.Easing.Quadratic.Out);
-        updateScore(1);
-        var that = this;
-        // setTimeout(function() {
-        that.destroy();
-        // },100);
+
+        // Empêche toute collision ultérieure, calcule le score et lance le son
+        this.p.collisionMask = 0;
+        if(!this.p.taken) {
+          updateScore(1);
+          this.p.taken = true;
+          Q.audio.play("coin");
+        }
+
+        // Retire la pièce avec une animation
+        this.animate(
+          { y: this.p.y - 50 }, // déplacement vers le haut de 50px
+          0.5,                  // durée en secondes
+          Q.Easing.Quadratic.Out,
+          { callback: function () {
+            this.destroy();
+          }.bind(this) }
+        );
       }
     });
   }
@@ -101,9 +116,12 @@ Q.Sprite.extend("Enemy", {
     this.on("bump.left,bump.right,bump.bottom", function (collision) {
       if (collision.obj.isA("Player")) {
         fail = true;
-        Q.stageScene("endGame", 1, { label: ":(" }); // Fin du jeu
+        Q.audio.play("dead");
+        // Q.stageScene("endGame", 1, { label: ":(" }); // Mort
         collision.obj.destroy();
         updateScore(-5);
+        Q.clearStages();
+        Q.loadlevel(currentLevel);
       }
     });
 
@@ -227,16 +245,18 @@ Q.scene("level4", function (stage) {
 // Fin de jeu
 Q.scene('endGame', function (stage) {
 
+  // Boîte de dialogue
   var box = stage.insert(new Q.UI.Container({
     x: Q.width / 2, y: Q.height / 2, fill: "rgba(0,0,0,0.5)"
   }));
 
-  if (currentLevel == maxLevel && !fail) { // Fin de la partie
+  if (currentLevel == maxLevel && !fail) { // Dernier niveau accompli, fin de la partie avec succès
     var button = box.insert(new Q.UI.Button({ x: 0, y: 0, fill: "#abc737", label: "Bien joué ! Nouvelle partie ?" }));
     currentLevel = 0;
-  } else if (fail) {
+    Q.audio.play("end");
+  } else if (fail) { // Perdu
     var button = box.insert(new Q.UI.Button({ x: 0, y: 0, fill: "#abc737", label: "Nouvel essai ?" }));
-  } else {
+  } else { // Niveau suivant
     var button = box.insert(new Q.UI.Button({ x: 0, y: 0, fill: "#abc737", label: "Niveau suivant" }));
   }
 
@@ -246,9 +266,11 @@ Q.scene('endGame', function (stage) {
 
   var label = box.insert(new Q.UI.Text({ color: "white", x: 10, y: -10 - button.p.h, label: stage.options.label }));
 
+  // Au clic sur le bouton, on charge le niveau sélectionné
   button.on("click", function () {
     Q.clearStages();
     Q.loadlevel(currentLevel);
+    Q.audio.play("winlevel");
   });
   box.fit(20);
 });
@@ -264,7 +286,19 @@ Q.loadlevel = function (levelIndex) {
 
 }
 
+// Démarrage du jeu avec le niveau défini
 Q.loadlevel(currentLevel);
+
+// Précharge les sons
+Q.audio.enableWebAudioSound();
+Q.load([
+  { wilhelmscream: "wilhelmscream.mp3" },
+  { coin: "coin.mp3" },
+  { winlevel: "winlevel.mp3" },
+  { bounce: "bounce.mp3" },
+  { dead: "dead.mp3" },
+  { end: "end.mp3" }
+]);
 
 // Cheat! Pour passer au niveau suivant avec shift+1, 2, 3, 4...
 document.querySelector('body').addEventListener('keyup', function (e) {
